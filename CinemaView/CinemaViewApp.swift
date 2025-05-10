@@ -11,7 +11,11 @@ import SwiftUI
 struct CinemaViewApp: App {
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            if let url = URL(string: "https://hdrezka.co/") {
+                WebView(url: url)
+            } else {
+                Text("Некорректный URL")
+            }
         }
     }
 }
