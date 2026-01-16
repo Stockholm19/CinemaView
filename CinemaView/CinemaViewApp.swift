@@ -20,11 +20,17 @@ struct CinemaViewApp: App {
 
     var body: some Scene {
         WindowGroup {
-            if let url = URL(string: "https://hdrezka.co/") {
-                WebView(url: url)
-            } else {
-                Text("Некорректный URL")
+            #if os(macOS)
+            ContentView()
+                .frame(minWidth: 800, minHeight: 600)
+            #else
+            NavigationView {
+                ContentView()
             }
+            #endif
         }
+        #if os(macOS)
+        .windowStyle(.hiddenTitleBar)
+        #endif
     }
 }

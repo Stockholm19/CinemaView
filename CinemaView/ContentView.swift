@@ -18,6 +18,11 @@ import WebKit
 
 struct WebView: PlatformViewRepresentable {
     let url: URL
+    @Binding var canGoBack: Bool
+    @Binding var canGoForward: Bool
+    @Binding var isLoading: Bool
+    @Binding var progress: Double
+    @Binding var webViewReference: WKWebView?
 
     #if os(iOS)
     func makeUIView(context: Context) -> WKWebView {
@@ -31,10 +36,17 @@ struct WebView: PlatformViewRepresentable {
     func updateNSView(_ nsView: WKWebView, context: Context) {}
     #endif
 
-    func makeCoordinator() -> Coordinator { Coordinator() }
+    func makeCoordinator() -> Coordinator {
+        Coordinator(parent: self)
+    }
 
     private func makeWebView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
+        
+        #if os(iOS)
+        config.allowsInlineMediaPlayback = true
+        config.allowsPictureInPictureMediaPlayback = true
+        #endif
 
         let blocker = WKUserScript(source: Self.networkBlockerScript,
                                    injectionTime: .atDocumentStart,
@@ -47,13 +59,53 @@ struct WebView: PlatformViewRepresentable {
         config.userContentController.addUserScript(css)
 
         let webView = WKWebView(frame: .zero, configuration: config)
-        webView.customUserAgent = "macOS Safari"
+        webView.customUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"
         webView.navigationDelegate = context.coordinator
+        
+        // Add observer for progress
+        context.coordinator.observation = webView.observe(\.estimatedProgress, options: [.new]) { wv, _ in
+            DispatchQueue.main.async {
+                self.progress = wv.estimatedProgress
+            }
+        }
+        
         webView.load(URLRequest(url: url))
+        
+        DispatchQueue.main.async {
+            self.webViewReference = webView
+        }
+        
         return webView
     }
 
-    class Coordinator: NSObject, WKNavigationDelegate {}
+    class Coordinator: NSObject, WKNavigationDelegate {
+        var parent: WebView
+        var observation: NSKeyValueObservation?
+
+        init(parent: WebView) {
+            self.parent = parent
+        }
+
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            updateStates(webView)
+        }
+        
+        func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+            updateStates(webView)
+        }
+        
+        func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+            updateStates(webView)
+        }
+
+        private func updateStates(_ webView: WKWebView) {
+            DispatchQueue.main.async {
+                self.parent.canGoBack = webView.canGoBack
+                self.parent.canGoForward = webView.canGoForward
+                self.parent.isLoading = webView.isLoading
+            }
+        }
+    }
 
     private static let networkBlockerScript = #"""
     (function() {
@@ -102,3 +154,127 @@ struct WebView: PlatformViewRepresentable {
     })();
     """#
 }
+
+struct ContentView: View {
+    let initialURL = URL(string: "https://hdrezka.co/")!
+    
+    @StateObject private var favoritesStore = FavoritesStore()
+    @State private var canGoBack = false
+    @State private var canGoForward = false
+    @State private var isLoading = false
+    @State private var progress: Double = 0
+    @State private var webView: WKWebView? = nil
+    @State private var showFavorites = false
+
+    var body: some View {
+        #if os(macOS)
+        content
+            .frame(minWidth: 800, minHeight: 600)
+        #else
+        content
+        #endif
+    }
+    
+    var content: some View {
+        VStack(spacing: 0) {
+            if isLoading && progress < 1.0 {
+                ProgressView(value: progress, total: 1.0)
+                    .progressViewStyle(LinearProgressViewStyle(tint: .blue))
+                    .frame(height: 2)
+            } else {
+                Divider().frame(height: 2).background(Color.clear)
+            }
+            
+            WebView(url: initialURL,
+                    canGoBack: $canGoBack,
+                    canGoForward: $canGoForward,
+                    isLoading: $isLoading,
+                    progress: $progress,
+                    webViewReference: $webView)
+        }
+        .toolbar {
+            ToolbarItemGroup(placement: .automatic) {
+                Button(action: { webView?.goBack() }) {
+                    Image(systemName: "chevron.left")
+                }
+                .disabled(!canGoBack)
+                
+                Button(action: { webView?.goForward() }) {
+                    Image(systemName: "chevron.right")
+                }
+                .disabled(!canGoForward)
+                
+                Button(action: { webView?.reload() }) {
+                    Image(systemName: "arrow.clockwise")
+                }
+                
+                Spacer()
+                
+                Button(action: {
+                    if let url = webView?.url {
+                        favoritesStore.toggle(title: webView?.title ?? "Кино", url: url)
+                    }
+                }) {
+                    Image(systemName: favoritesStore.isFavorite(url: webView?.url) ? "star.fill" : "star")
+                        .foregroundColor(.yellow)
+                }
+                
+                Button(action: { showFavorites.toggle() }) {
+                    Image(systemName: "list.bullet")
+                }
+                
+                Button(action: { 
+                    webView?.load(URLRequest(url: initialURL))
+                }) {
+                    Image(systemName: "house")
+                }
+            }
+        }
+        .sheet(isPresented: $showFavorites) {
+            FavoritesView(store: favoritesStore) { url in
+                webView?.load(URLRequest(url: url))
+                showFavorites = false
+            }
+            #if os(macOS)
+            .frame(width: 300, height: 400)
+            #endif
+        }
+    }
+}
+
+struct FavoritesView: View {
+    @ObservedObject var store: FavoritesStore
+    var onSelect: (URL) -> Void
+    
+    var body: some View {
+        VStack {
+            HStack {
+                Text("Избранное")
+                    .font(.headline)
+                Spacer()
+                #if os(iOS)
+                EditButton()
+                #endif
+            }
+            .padding()
+            
+            List {
+                ForEach(store.items) { item in
+                    Button(action: { onSelect(item.url) }) {
+                        VStack(alignment: .leading) {
+                            Text(item.title)
+                                .font(.body)
+                                .lineLimit(1)
+                            Text(item.url.absoluteString)
+                                .font(.caption)
+                                .foregroundColor(.gray)
+                                .lineLimit(1)
+                        }
+                    }
+                }
+                .onDelete(perform: store.remove)
+            }
+        }
+    }
+}
+
