@@ -156,7 +156,7 @@ struct WebView: PlatformViewRepresentable {
 }
 
 struct ContentView: View {
-    let initialURL = URL(string: "https://hdrezka.co/")!
+    let initialURL = URL(string: "https://rezka.ag/")!
     
     @StateObject private var favoritesStore = FavoritesStore()
     @State private var canGoBack = false
