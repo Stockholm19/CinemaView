@@ -1,3 +1,6 @@
 # Xcode user state
 *.xcuserstate
 xcuserdata/
+# Xcode user files
+xcuserdata/
+*.xcuserstate
